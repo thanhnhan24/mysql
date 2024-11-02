@@ -35,6 +35,9 @@ class Ui_MainWindow(object):
         self.y_center = None
         self.box_width = None
         self.box_height = None
+        self.labels_log = set()
+        self.detect_log = set()
+        self.detect_index_ref = []
         pass
     def setupUi(self, MainWindow):
         if not MainWindow.objectName():
@@ -226,6 +229,10 @@ class Ui_MainWindow(object):
             if connection.is_connected():
                 self.display_message("Kết nối thành công!")
                 self.connection = connection
+                cursor1 = connection.cursor()
+                cursor1.execute("SELECT * FROM labels")
+                self.labels_log = cursor1.fetchall()
+
         except mysql.connector.Error as err:
             self.display_message(f"Lỗi kết nối: {err}")
         except ValueError:
@@ -238,8 +245,6 @@ class Ui_MainWindow(object):
         self.output_terminal.setModel(self.model1)
 
     def display_info(self, img_width, img_height, bounding_boxes):
-        conn = self.connection
-        cursor = conn.cursor()
         info_list = []
         # Thêm thông tin chiều rộng và chiều cao vào danh sách
         info_list.append(f"Width: {img_width}")
@@ -250,9 +255,7 @@ class Ui_MainWindow(object):
             info_list.append("\nBounding Boxes:\n")
             for box in bounding_boxes:
                 x_center, y_center, box_width, box_height, label = box
-                cursor.execute("SELECT * FROM labels WHERE label = %s", (label,))
-                data = cursor.fetchone()
-                id, label, student_name = data
+                id, label, student_name = self.labels_log[next((i for i, item in enumerate(self.labels_log) if item[1] == label), None)]
                 info_list.append(f"Label: {label},\nStudent name: {student_name},\nCenter: ({x_center}, {y_center}),\nWidth: {box_width},\nHeight: {box_height}")
 
         # Cập nhật vào QListView
@@ -327,6 +330,7 @@ class Ui_MainWindow(object):
                         self.detect_task(file_path)
                         self.processed_files.add(file_path)
                         self.display_message(f"Tiến hành chuẩn đoán\nFile: {file_path}\n")
+                        self.detect_index_ref.append(file_path)
                     except Exception as e:
                         self.display_message(f"Lỗi khi chuẩn đoán hàng loạt: {e}")
             self.display_message("Kết thúc chuẩn đoán hàng loạt")
@@ -335,7 +339,7 @@ class Ui_MainWindow(object):
             img_extension = ['.jpg','.png','.jpeg','.bmp']
             if extension.lower() in img_extension:
                 self.display_message('You enter an image')
-                self.detect_task(raw)
+                self.process_image(raw, True)
             else:
                 self.display_message('Invalid extension')
 
@@ -434,10 +438,10 @@ class Ui_MainWindow(object):
 
     def detect_task(self, path):
         # Tạo một thread để thực hiện quá trình phát hiện
-        thread = threading.Thread(target=self.process_image, args=(path,))
+        thread = threading.Thread(target=self.process_image, args=(path,False))
         thread.start()  # Bắt đầu thread
 
-    def process_image(self, path):
+    def process_image(self, path, mode):
         img = cv2.imread(path)
         model = self.model_init()
         results = model(img)
@@ -483,10 +487,11 @@ class Ui_MainWindow(object):
         
         # Cập nhật QLabel trên giao diện người dùng (cần đảm bảo thread an toàn)
         self.update_image(pixmap)
-        
-        # Gọi hàm display_info với bounding_boxes đã chuyển đổi (dạng YOLO format)
-        self.display_info(self.img_width, self.img_height, bounding_boxes)
-
+        if mode == True:
+            # Gọi hàm display_info với bounding_boxes đã chuyển đổi (dạng YOLO format)
+            self.display_info(self.img_width, self.img_height, bounding_boxes)
+        else:
+            self.detect_log.add(tuple([self.img_width, self.img_height, tuple(bounding_boxes)]))
     def update_image(self, pixmap):
         """Cập nhật QLabel với hình ảnh đã xử lý."""
         # Đảm bảo cập nhật giao diện từ thread chính
@@ -505,7 +510,11 @@ class Ui_MainWindow(object):
             img_extension = ['.jpg','.png','.jpeg','.bmp']
             if extension.lower() in img_extension:
                 self.display_message(f'Hiển thị dữ liệu chuẩn đoán file: {item}')
-                self.detect_task(item)
+                self.process_image(item, True)
+                #self.detect_task(item)
+                # index = self.detect_index_ref.index(item)
+                # img_width, img_height, bounding_boxes = list(self.detect_log)[index]
+                # self.display_info(img_width, img_height, bounding_boxes)
 
     def add_process(self, index):
         if index:
